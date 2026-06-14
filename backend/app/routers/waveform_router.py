@@ -1,12 +1,62 @@
-from fastapi import APIRouter, UploadFile, File
-from app.services.seismic_service import process_waveform
+from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException
+from app.services.seismic_service import (
+    process_waveform,
+    process_waveform_async,
+    create_task,
+    get_task,
+    TaskStatus,
+)
 
 router = APIRouter()
 
 
 @router.post("/waveform/upload")
-async def upload_waveform(file: UploadFile = File(...)):
-    """Upload SAC/miniSEED file and run analysis."""
+async def upload_waveform(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    """Upload SAC/miniSEED file and run analysis asynchronously with progress tracking."""
+    content = await file.read()
+    file_size = len(content)
+    filename = file.filename or "unknown"
+
+    task_id = create_task(filename, file_size)
+
+    background_tasks.add_task(process_waveform_async, task_id, content, filename)
+
+    return {
+        "task_id": task_id,
+        "filename": filename,
+        "file_size": file_size,
+        "message": "文件上传成功，正在后台处理...",
+    }
+
+
+@router.get("/waveform/task/{task_id}")
+async def get_task_status(task_id: str):
+    """Get processing task status and progress."""
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    response = {
+        "id": task["id"],
+        "filename": task["filename"],
+        "file_size": task["file_size"],
+        "status": task["status"],
+        "stage": task["stage"],
+        "progress": task["progress"],
+        "message": task["message"],
+        "created_at": task["created_at"],
+        "updated_at": task["updated_at"],
+    }
+
+    if task["status"] == TaskStatus.COMPLETED and task["result"]:
+        response["result"] = task["result"]
+
+    return response
+
+
+@router.post("/waveform/upload-sync")
+async def upload_waveform_sync(file: UploadFile = File(...)):
+    """Upload SAC/miniSEED file and run analysis synchronously (legacy)."""
     content = await file.read()
     result = process_waveform(content, file.filename or "unknown")
     return result

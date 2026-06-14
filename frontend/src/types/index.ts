@@ -29,3 +29,28 @@ export interface SeismicEvent {
   originTime: string
   location: string
 }
+
+export type TaskStatus = 'pending' | 'uploading' | 'parsing' | 'analyzing' | 'completed' | 'failed'
+
+export interface ProcessingTask {
+  id: string
+  filename: string
+  file_size: number
+  status: TaskStatus
+  stage: string
+  progress: number
+  message: string
+  created_at: number
+  updated_at: number
+  result?: {
+    waveform: WaveformData
+    picks: PhasePick[]
+  }
+}
+
+export interface UploadResponse {
+  task_id: string
+  filename: string
+  file_size: number
+  message: string
+}
