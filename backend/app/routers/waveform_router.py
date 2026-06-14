@@ -1,4 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, BackgroundTasks, HTTPException
+import asyncio
 from app.services.seismic_service import (
     process_waveform,
     process_waveform_async,
@@ -10,6 +11,15 @@ from app.services.seismic_service import (
 router = APIRouter()
 
 
+def run_async_task(coro):
+    """Run async task in a new event loop for background tasks."""
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
 @router.post("/waveform/upload")
 async def upload_waveform(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     """Upload SAC/miniSEED file and run analysis asynchronously with progress tracking."""
@@ -19,7 +29,7 @@ async def upload_waveform(background_tasks: BackgroundTasks, file: UploadFile = 
 
     task_id = create_task(filename, file_size)
 
-    background_tasks.add_task(process_waveform_async, task_id, content, filename)
+    background_tasks.add_task(run_async_task, process_waveform_async(task_id, content, filename))
 
     return {
         "task_id": task_id,

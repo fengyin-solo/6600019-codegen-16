@@ -17,10 +17,10 @@ class TaskStatus(str, Enum):
 
 
 class ProcessingStage:
-    UPLOADING = {"name": "上传文件", "progress": 10}
-    PARSING = {"name": "解析波形", "progress": 40}
-    ANALYZING = {"name": "震相分析", "progress": 70}
-    COMPLETED = {"name": "处理完成", "progress": 100}
+    UPLOADING = {"name": "上传文件", "start": 0, "end": 15}
+    PARSING = {"name": "解析波形", "start": 15, "end": 50}
+    ANALYZING = {"name": "震相分析", "start": 50, "end": 90}
+    COMPLETED = {"name": "处理完成", "start": 90, "end": 100}
 
 
 _tasks: Dict[str, Dict[str, Any]] = {}
@@ -36,7 +36,7 @@ def create_task(filename: str, file_size: int) -> str:
         "status": TaskStatus.PENDING,
         "stage": ProcessingStage.UPLOADING["name"],
         "progress": 0,
-        "message": "任务已创建，等待处理...",
+        "message": "任务已创建，开始处理...",
         "result": None,
         "created_at": time.time(),
         "updated_at": time.time(),
@@ -49,13 +49,14 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     return _tasks.get(task_id)
 
 
-def _update_progress(task_id: str, status: TaskStatus, stage: Dict[str, Any], message: str):
+def _update_progress(task_id: str, status: TaskStatus, stage_name: str, 
+                     progress: int, message: str):
     """Update task progress."""
     if task_id in _tasks:
         _tasks[task_id].update({
             "status": status,
-            "stage": stage["name"],
-            "progress": stage["progress"],
+            "stage": stage_name,
+            "progress": progress,
             "message": message,
             "updated_at": time.time(),
         })
@@ -67,8 +68,8 @@ def _set_result(task_id: str, result: Dict[str, Any]):
         _tasks[task_id].update({
             "status": TaskStatus.COMPLETED,
             "stage": ProcessingStage.COMPLETED["name"],
-            "progress": ProcessingStage.COMPLETED["progress"],
-            "message": "处理完成",
+            "progress": 100,
+            "message": "处理完成，点击查看结果",
             "result": result,
             "updated_at": time.time(),
         })
@@ -82,6 +83,20 @@ def _set_error(task_id: str, error: str):
             "message": f"处理失败: {error}",
             "updated_at": time.time(),
         })
+
+
+async def _run_stage(task_id: str, status: TaskStatus, stage: Dict[str, Any], 
+                     duration: float, message_prefix: str):
+    """Run a processing stage with smooth progress updates."""
+    steps = 10
+    step_duration = duration / steps
+    progress_range = stage["end"] - stage["start"]
+    
+    for i in range(steps + 1):
+        progress = stage["start"] + int(progress_range * i / steps)
+        _update_progress(task_id, status, stage["name"], progress, 
+                         f"{message_prefix}... {progress}%")
+        await asyncio.sleep(step_duration)
 
 
 def generate_mock_waveform(duration: int = 60, sr: int = 100) -> Dict[str, Any]:
@@ -163,21 +178,19 @@ def process_waveform(file_bytes: bytes, filename: str) -> Dict[str, Any]:
 
 
 async def process_waveform_async(task_id: str, file_bytes: bytes, filename: str):
-    """Process waveform asynchronously with progress tracking."""
+    """Process waveform asynchronously with smooth progress tracking."""
     try:
-        _update_progress(task_id, TaskStatus.UPLOADING, ProcessingStage.UPLOADING,
-                          f"正在上传文件: {filename}")
-        await asyncio.sleep(0.8)
-
-        file_size_mb = len(file_bytes) / (1024 / 1024)
-        _update_progress(task_id, TaskStatus.PARSING, ProcessingStage.PARSING,
-                          f"正在解析波形数据 ({file_size_mb:.1f} MB")
-        await asyncio.sleep(1.2)
-
-        _update_progress(task_id, TaskStatus.ANALYZING, ProcessingStage.ANALYZING,
-                          "正在运行 STA/LTA 震相拾取分析...")
-        await asyncio.sleep(1.0)
-
+        file_size_mb = len(file_bytes) / (1024 * 1024)
+        
+        await _run_stage(task_id, TaskStatus.UPLOADING, ProcessingStage.UPLOADING,
+                        0.8, f"正在上传文件: {filename}")
+        
+        await _run_stage(task_id, TaskStatus.PARSING, ProcessingStage.PARSING,
+                        1.2, f"正在解析波形数据 ({file_size_mb:.1f} MB)")
+        
+        await _run_stage(task_id, TaskStatus.ANALYZING, ProcessingStage.ANALYZING,
+                        1.5, "正在运行 STA/LTA 震相拾取分析")
+        
         result = process_waveform(file_bytes, filename)
         _set_result(task_id, result)
 

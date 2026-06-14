@@ -13,6 +13,8 @@ export const useSeismicStore = defineStore('seismic', () => {
   const currentTask = ref<ProcessingTask | null>(null)
   const taskHistory = ref<ProcessingTask[]>([])
   let pollInterval: number | null = null
+  let pollCount = 0
+  const maxPollRetries = 120
 
   const events = ref<SeismicEvent[]>([
     { id: '1', magnitude: 4.2, depth: 12.5, originTime: '2025-01-15T08:23:41Z', location: '四川雅安' },
@@ -127,18 +129,33 @@ export const useSeismicStore = defineStore('seismic', () => {
       clearInterval(pollInterval)
       pollInterval = null
     }
+    pollCount = 0
   }
 
   async function pollTaskStatus(taskId: string) {
+    pollCount++
+    
+    if (pollCount > maxPollRetries) {
+      stopPolling()
+      if (currentTask.value) {
+        currentTask.value.status = 'failed'
+        currentTask.value.message = '处理超时，请重试'
+      }
+      return
+    }
+
     try {
       const resp = await fetch(`/api/waveform/task/${taskId}`)
       if (resp.ok) {
         const task: ProcessingTask = await resp.json()
-        currentTask.value = task
+        
+        if (currentTask.value) {
+          currentTask.value = { ...currentTask.value, ...task }
+        } else {
+          currentTask.value = task
+        }
 
-        if (task.status === 'completed' && task.result) {
-          waveform.value = task.result.waveform
-          picks.value = task.result.picks || []
+        if (task.status === 'completed') {
           stopPolling()
           addToHistory(task)
         } else if (task.status === 'failed') {
@@ -158,6 +175,11 @@ export const useSeismicStore = defineStore('seismic', () => {
       if (taskHistory.value.length > 10) {
         taskHistory.value.pop()
       }
+    } else {
+      const index = taskHistory.value.findIndex(t => t.id === task.id)
+      if (index !== -1) {
+        taskHistory.value[index] = { ...task }
+      }
     }
   }
 
@@ -168,8 +190,15 @@ export const useSeismicStore = defineStore('seismic', () => {
 
   function loadTaskResult(task: ProcessingTask) {
     if (task.result) {
-      waveform.value = task.result.waveform
-      picks.value = task.result.picks || []
+      waveform.value = { ...task.result.waveform }
+      picks.value = [...(task.result.picks || [])]
+    }
+  }
+
+  function viewCurrentResult() {
+    if (currentTask.value?.result) {
+      loadTaskResult(currentTask.value)
+      clearCurrentTask()
     }
   }
 
@@ -193,7 +222,7 @@ export const useSeismicStore = defineStore('seismic', () => {
           created_at: Date.now() / 1000,
           updated_at: Date.now() / 1000,
         }
-        pollInterval = window.setInterval(() => pollTaskStatus(data.task_id), 500)
+        pollInterval = window.setInterval(() => pollTaskStatus(data.task_id), 300)
       } else {
         throw new Error('上传失败')
       }
@@ -208,6 +237,6 @@ export const useSeismicStore = defineStore('seismic', () => {
     waveform, picks, selectedStation, staWindow, ltaWindow, threshold,
     isLoading, events, stations, currentTask, taskHistory, isProcessing,
     loadMockData, staLtaPicking, uploadAndAnalyze, generateMockWaveform,
-    clearCurrentTask, loadTaskResult
+    clearCurrentTask, loadTaskResult, viewCurrentResult
   }
 })
